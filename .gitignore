@@ -29,6 +29,10 @@ ENV/
 env/
 .venv
 
+# PyInstaller
+*.spec
+*.manifest
+
 # IDE & Editors
 .vscode/
 .idea/
