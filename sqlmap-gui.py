@@ -11,11 +11,24 @@ from tkinter import ttk, messagebox, filedialog
 import subprocess
 import threading
 import os
+import sys
 import json
 import platform
 
 # 检测操作系统
 IS_WINDOWS = platform.system() == 'Windows'
+
+# 获取脚本所在目录（用于打包后的路径处理）
+def get_script_dir():
+    """获取脚本所在的目录，兼容PyInstaller打包后的情况"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller打包后的exe运行
+        return os.path.dirname(sys.executable)
+    else:
+        # 普通Python脚本运行
+        return os.path.dirname(os.path.abspath(__file__))
+
+SCRIPT_DIR = get_script_dir()
 
 # 配色方案
 COLORS = {
@@ -591,6 +604,10 @@ class SQLMapGUI:
         # 构建新命令
         cmd = [self.python_cmd, 'sqlmap.py']
         
+        # 设置输出目录为当前目录下的output文件夹
+        output_dir = os.path.join(SCRIPT_DIR, 'output')
+        cmd.extend(['--output-dir', output_dir])
+        
         # 目标
         url = self.url_var.get().strip()
         if url:
@@ -696,7 +713,7 @@ class SQLMapGUI:
         try:
             self.scan_process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                universal_newlines=True, bufsize=1,
+                universal_newlines=True, bufsize=1, cwd=SCRIPT_DIR,
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if IS_WINDOWS else 0
             )
             
