@@ -293,7 +293,7 @@ Address already in use: ('127.0.0.1', 5000)
 | **当前版本** | V1.1                                                                      |
 | **作者**     | bae                                                                       |
 | **邮箱**     | 1073723512@qq.com                                                         |
-| **更新日期** | 2026/2/19                                                                 |
+| **更新日期** | 2026/2/25                                                                 |
 | **原始项目** | [honmashironeko/sqlmap-gui](https://github.com/honmashironeko/sqlmap-gui) |
 
 ### 📄 许可证
