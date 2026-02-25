@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SQLMap GUI v1.0 - 图形化SQL注入扫描工具
+SQLMap GUI v1.1 - 图形化SQL注入扫描工具
 基于汉化版sqlmap: https://github.com/honmashironeko/sqlmap-gui/
 作者: bae
 日期: 2026/2/28
@@ -14,6 +14,7 @@ import os
 import sys
 import json
 import platform
+import shlex
 
 # 检测操作系统
 IS_WINDOWS = platform.system() == 'Windows'
@@ -54,10 +55,24 @@ COLORS = {
 class SQLMapGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("SQLMap GUI v1.0")
+        self.root.title("SQLMap GUI v1.1")
         self.root.geometry("1400x900")
         self.root.minsize(1200, 700)
         self.root.configure(bg=COLORS['bg_primary'])
+        
+        # 设置图标
+        try:
+            if hasattr(sys, '_MEIPASS'):
+                # PyInstaller 单文件模式，资源在临时目录
+                icon_path = os.path.join(sys._MEIPASS, 'Ace.ico')
+            else:
+                # 正常开发模式，资源在脚本同级目录
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Ace.ico')
+            
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception:
+            pass
         
         # 配置
         self.config_file = "sqlmap_gui_config.json"
@@ -70,6 +85,7 @@ class SQLMapGUI:
         self.is_scanning = False
         self.is_paused = False
         self.current_tab = 0
+        self.manual_mode = False  # 新增：标记是否处于手动编辑命令模式
         
         # 创建界面
         self.create_widgets()
@@ -107,7 +123,7 @@ class SQLMapGUI:
                 font=('Microsoft YaHei', 18, 'bold'),
                 bg=COLORS['bg_secondary'], fg=COLORS['accent_primary']).pack(side='left', padx=15, pady=10)
         
-        tk.Label(header, text="v1.0", 
+        tk.Label(header, text="v1.1", 
                 font=('Microsoft YaHei', 10),
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary']).pack(side='left', pady=15)
         
@@ -225,15 +241,15 @@ class SQLMapGUI:
         for name, url in [("SQL Labs", "http://127.0.0.1/sql-labs/Less-1/?id=1"),
                           ("DVWA", "http://127.0.0.1/dvwa/vulnerabilities/sqli/?id=1"),
                           ("Pikachu", "http://127.0.0.1/pikachu/vul/sqli/sqli_id.php?id=1")]:
-            btn = tk.Button(quick, text=name, command=lambda u=url: self.url_var.set(u),
+            btn = tk.Button(quick, text=name, command=lambda u=url: self.set_quick_url(u),
                            bg=COLORS['accent_primary'], fg=COLORS['text_primary'],
                            font=('Microsoft YaHei', 9), relief='flat', padx=8, pady=3)
             btn.pack(side='left', padx=2)
         
         # 批量目标
-        card2 = self.create_card(parent, "批量目标")
+        card2 = self.create_card(parent, "批量目标 (与目标URL互斥)")
         
-        tk.Label(card2, text="URL列表文件:", bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
+        tk.Label(card2, text="URL列表文件 (-m):", bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
                 font=('Microsoft YaHei', 10)).pack(anchor='w')
         
         f1 = tk.Frame(card2, bg=COLORS['bg_card'])
@@ -241,10 +257,10 @@ class SQLMapGUI:
         self.url_file_var = tk.StringVar()
         tk.Entry(f1, textvariable=self.url_file_var, font=('Microsoft YaHei', 10),
                 bg=COLORS['bg_input'], fg=COLORS['text_primary'], relief='flat').pack(side='left', fill='x', expand=True)
-        tk.Button(f1, text="浏览", command=lambda: self.browse_file(self.url_file_var),
+        tk.Button(f1, text="浏览", command=lambda: self.browse_file(self.url_file_var, [self.url_var, self.req_file_var, self.dork_var]),
                  bg=COLORS['accent_info'], fg=COLORS['text_primary'], relief='flat', padx=10).pack(side='left', padx=5)
         
-        tk.Label(card2, text="HTTP请求文件:", bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
+        tk.Label(card2, text="HTTP请求文件 (-r):", bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
                 font=('Microsoft YaHei', 10)).pack(anchor='w', pady=(8, 0))
         
         f2 = tk.Frame(card2, bg=COLORS['bg_card'])
@@ -252,7 +268,7 @@ class SQLMapGUI:
         self.req_file_var = tk.StringVar()
         tk.Entry(f2, textvariable=self.req_file_var, font=('Microsoft YaHei', 10),
                 bg=COLORS['bg_input'], fg=COLORS['text_primary'], relief='flat').pack(side='left', fill='x', expand=True)
-        tk.Button(f2, text="浏览", command=lambda: self.browse_file(self.req_file_var),
+        tk.Button(f2, text="浏览", command=lambda: self.browse_file(self.req_file_var, [self.url_var, self.url_file_var, self.dork_var]),
                  bg=COLORS['accent_info'], fg=COLORS['text_primary'], relief='flat', padx=10).pack(side='left', padx=5)
         
         tk.Label(card2, text="Google Dork:", bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
@@ -445,11 +461,22 @@ class SQLMapGUI:
         tk.Checkbutton(card4, text="自动应答 (--batch)", variable=self.batch_var,
                       bg=COLORS['bg_card'], fg=COLORS['text_primary'],
                       selectcolor=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(anchor='w', pady=3)
+        
+        self.output_dir_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(card4, text="保存输出到 output 目录", variable=self.output_dir_var,
+                      bg=COLORS['bg_card'], fg=COLORS['text_primary'],
+                      selectcolor=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(anchor='w', pady=3)
+
         self.flush_var = tk.BooleanVar()
         tk.Checkbutton(card4, text="刷新会话 (--flush-session)", variable=self.flush_var,
                       bg=COLORS['bg_card'], fg=COLORS['text_primary'],
                       selectcolor=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(anchor='w', pady=3)
         
+        self.external_term_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(card4, text="在外部终端运行 (推荐)", variable=self.external_term_var,
+                      bg=COLORS['bg_card'], fg=COLORS['text_primary'],
+                      selectcolor=COLORS['bg_secondary'], font=('Microsoft YaHei', 10)).pack(anchor='w', pady=3)
+
         tk.Label(card4, text="详细级别 (-v):", bg=COLORS['bg_card'], 
                 fg=COLORS['text_primary'], font=('Microsoft YaHei', 10)).pack(anchor='w', pady=(8, 0))
         f = tk.Frame(card4, bg=COLORS['bg_card'])
@@ -522,6 +549,14 @@ class SQLMapGUI:
         self.terminal.tag_configure('warning', foreground=COLORS['terminal_yellow'])
         self.terminal.tag_configure('error', foreground=COLORS['terminal_red'])
         self.terminal.tag_configure('command', foreground=COLORS['terminal_yellow'])
+        self.terminal.tag_configure('input', foreground=COLORS['text_primary'], background='#333333')
+        
+
+        
+        # 移除了发送按钮，因为它不再起作用
+        
+        # 仅在外部终端模式下禁用输入框，或者给提示
+        # 这里暂时保持启用，但在点击发送时进行检查
         
         # 控制按钮
         ctrl_frame = tk.Frame(parent, bg=COLORS['bg_primary'], height=50)
@@ -534,11 +569,7 @@ class SQLMapGUI:
                                  padx=20, pady=6, cursor='hand2')
         self.scan_btn.pack(side='left', padx=10, pady=7)
         
-        self.pause_btn = tk.Button(ctrl_frame, text="⏸ 暂停", command=self.toggle_pause,
-                                  bg=COLORS['accent_warning'], fg=COLORS['text_primary'],
-                                  font=('Microsoft YaHei', 11), relief='flat',
-                                  padx=15, pady=6, cursor='hand2', state='disabled')
-        self.pause_btn.pack(side='left', padx=5, pady=7)
+        # 暂停按钮已移除，因为在 subprocess 管道中难以稳定实现
         
         self.stop_btn = tk.Button(ctrl_frame, text="⏹ 停止", command=self.stop_scan,
                                  bg=COLORS['accent_danger'], fg=COLORS['text_primary'],
@@ -560,7 +591,7 @@ class SQLMapGUI:
         tk.Label(status, textvariable=self.status_var, bg=COLORS['bg_secondary'],
                 fg=COLORS['text_secondary'], font=('Microsoft YaHei', 10)).pack(side='left', padx=15, pady=4)
         
-        tk.Label(status, text="SQLMap GUI v1.0 | 作者: bae | 2026/2/28",
+        tk.Label(status, text="SQLMap GUI v1.1 | 作者: bae | 2026/2/28",
                 bg=COLORS['bg_secondary'], fg=COLORS['text_secondary'],
                 font=('Microsoft YaHei', 9)).pack(side='right', padx=15, pady=4)
     
@@ -571,51 +602,76 @@ class SQLMapGUI:
         self.tab_frames[idx].pack(fill='both', expand=True)
         self.current_tab = idx
     
-    def browse_file(self, var):
+    def browse_file(self, var, clear_vars=None):
         filename = filedialog.askopenfilename(filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")])
         if filename:
             var.set(filename)
+            if clear_vars:
+                for v in clear_vars:
+                    v.set('')
+
+    def set_quick_url(self, url):
+        self.url_var.set(url)
+        self.url_file_var.set('')
+        self.req_file_var.set('')
+        self.dork_var.set('')
     
     def edit_cmd(self):
         self.cmd_entry.config(state='normal', bg=COLORS['bg_input'])
         self.cmd_entry.focus_set()
         self.status_var.set("编辑模式 - 修改后按Enter确认")
-        self.cmd_entry.bind('<Return>', lambda e: self.cmd_entry.config(state='readonly', bg=COLORS['bg_secondary']) or self.status_var.set("命令已更新"))
+        self.manual_mode = True  # 标记为手动模式
+        self.cmd_entry.bind('<Return>', lambda e: self.confirm_edit())
+    
+    def confirm_edit(self):
+        self.cmd_entry.config(state='readonly', bg=COLORS['bg_secondary'])
+        self.status_var.set("命令已更新 (手动模式)")
     
     def copy_cmd(self):
         self.root.clipboard_clear()
         self.root.clipboard_append(self.cmd_var.get())
         self.status_var.set("命令已复制")
-    
+
     def update_cmd(self):
-        cmd = self.build_command()
-        self.cmd_var.set(' '.join(cmd))
-        self.status_var.set("命令已更新")
+        self.manual_mode = False  # 退出手动模式，强制使用GUI设置
+        cmd = self.build_command(force_rebuild=True)
+        if IS_WINDOWS:
+            cmd_str = subprocess.list2cmdline(cmd)
+        else:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
+        self.cmd_var.set(cmd_str)
+        self.status_var.set("命令已更新 (GUI模式)")
     
-    def build_command(self):
-        # 从命令框获取命令，如果用户编辑过则使用编辑后的
-        cmd_text = self.cmd_var.get()
-        if cmd_text and cmd_text != f'{self.python_cmd} sqlmap.py -u "" --batch':
-            # 解析命令
-            parts = cmd_text.split()
-            if len(parts) >= 2 and 'sqlmap.py' in parts[1]:
+    def build_command(self, force_rebuild=False):
+        # 只有在手动模式下，且没有强制重建时，才使用文本框内容
+        if self.manual_mode and not force_rebuild:
+            cmd_text = self.cmd_var.get()
+            # 兼容旧的手动输入逻辑，尝试智能识别
+            if cmd_text and 'sqlmap.py' in cmd_text:
+                try:
+                    parts = shlex.split(cmd_text, posix=not IS_WINDOWS)
+                except:
+                    parts = cmd_text.split()
                 return parts
         
-        # 构建新命令
+        # 否则总是从GUI组件构建新命令
         cmd = [self.python_cmd, 'sqlmap.py']
         
-        # 设置输出目录为当前目录下的output文件夹
-        output_dir = os.path.join(SCRIPT_DIR, 'output')
-        cmd.extend(['--output-dir', output_dir])
+        # 设置输出目录
+        if self.output_dir_var.get():
+            output_dir = os.path.join(SCRIPT_DIR, 'output')
+            cmd.extend(['--output-dir', output_dir])
         
         # 目标
         url = self.url_var.get().strip()
         if url:
             cmd.extend(['-u', url])
         elif self.url_file_var.get().strip():
-            cmd.extend(['-m', self.url_file_var.get().strip()])
+            # 使用 os.path.normpath 规范化路径
+            cmd.extend(['-m', os.path.normpath(self.url_file_var.get().strip())])
         elif self.req_file_var.get().strip():
-            cmd.extend(['-r', self.req_file_var.get().strip()])
+            # 使用 os.path.normpath 规范化路径
+            cmd.extend(['-r', os.path.normpath(self.req_file_var.get().strip())])
         elif self.dork_var.get().strip():
             cmd.extend(['-g', self.dork_var.get().strip()])
         
@@ -688,52 +744,106 @@ class SQLMapGUI:
     
     def toggle_scan(self):
         if self.is_scanning:
+            # 如果正在扫描，点击按钮应该是停止操作（逻辑上）
+            # 但既然有单独的停止按钮，这个按钮在扫描时应该禁用或显示为“扫描中”
             return
         
         cmd = self.build_command()
         if len(cmd) <= 2:
             messagebox.showerror("错误", "请先设置目标URL")
             return
+
+        if IS_WINDOWS:
+            cmd_str = subprocess.list2cmdline(cmd)
+        else:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
+
+        # 外部终端运行模式
+        if self.external_term_var.get():
+            try:
+                # 外部终端无法获取实时输出，只能“发后即忘”
+                if IS_WINDOWS:
+                    # 使用 start cmd /k 来保持窗口打开
+                    full_cmd = f'start "SQLMap Scan" cmd /k "{cmd_str} & echo. & echo [扫描结束] & pause"'
+                    subprocess.Popen(full_cmd, shell=True, cwd=SCRIPT_DIR)
+                else:
+                    # Linux/Mac 尝试调用常见终端
+                    terminals = ['gnome-terminal', 'xterm', 'konsole']
+                    started = False
+                    for term in terminals:
+                        try:
+                            subprocess.Popen([term, '-e', f'bash -c "{cmd_str}; read -p \'Press Enter to close...\'"'], cwd=SCRIPT_DIR)
+                            started = True
+                            break
+                        except:
+                            continue
+                    if not started:
+                         messagebox.showwarning("提示", "未找到支持的外部终端，将在内部运行")
+                         # 降级到内部运行
+                         pass
+                    else:
+                        self.status_var.set("已在外部终端启动扫描")
+                        self.append_terminal(f"[*] 扫描已在外部终端启动:\n$ {cmd_str}\n", 'info')
+                        return
+
+                self.status_var.set("已在外部终端启动扫描")
+                self.append_terminal(f"[*] 扫描已在外部终端启动:\n$ {cmd_str}\n", 'info')
+                return
+            except Exception as e:
+                messagebox.showerror("错误", f"启动外部终端失败: {e}")
+                return
         
+        # 内部模式
         self.is_scanning = True
         self.is_paused = False
+        
+        # 更新按钮状态
         self.scan_btn.config(text="⏳ 扫描中...", state='disabled')
-        self.pause_btn.config(state='normal')
+        # 暂停功能在 subprocess 管道读取中很难完美实现，且 sqlmap 本身不建议暂停
+        # 容易导致连接超时或状态丢失。为了稳定性，禁用暂停按钮。
+        # self.pause_btn.config(state='disabled') 
         self.stop_btn.config(state='normal')
         self.status_var.set("正在扫描...")
         
         self.terminal.delete(1.0, 'end')
-        self.append_terminal(f"$ {' '.join(cmd)}\n\n", 'command')
+        self.append_terminal(f"$ {cmd_str}\n\n", 'command')
         
         thread = threading.Thread(target=self.run_scan, args=(cmd,))
+        thread.daemon = True # 设置为守护线程，防止主程序退出后线程卡死
+        thread.start()
         thread.daemon = True
         thread.start()
     
     def run_scan(self, cmd):
         try:
+            # 彻底的文本模式，使用系统默认编码
+            # 在 Windows 中，默认编码通常是 GBK (cp936)
+            # 这样 sqlmap 输出的中文字符就能被正确解码
             self.scan_process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                stdin=subprocess.DEVNULL,
                 universal_newlines=True, bufsize=1, cwd=SCRIPT_DIR,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if IS_WINDOWS else 0
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if IS_WINDOWS else 0,
+                encoding=None, errors='replace' # 让 Python 自动探测系统编码
             )
             
             for line in iter(self.scan_process.stdout.readline, ''):
                 if not self.is_scanning:
                     break
                 
-                while self.is_paused and self.is_scanning:
-                    import time
-                    time.sleep(0.1)
-                
-                # 检测标签
+                # 解析日志级别并应用颜色
                 tag = None
-                if '[INFO]' in line or '[*]' in line:
+                if '[INFO]' in line:
                     tag = 'info'
-                elif '[SUCCESS]' in line or '[+]' in line:
-                    tag = 'success'
-                elif '[WARNING]' in line or '[!]' in line:
+                elif '[WARNING]' in line:
                     tag = 'warning'
-                elif '[ERROR]' in line or '[-]' in line:
+                elif '[ERROR]' in line or '[CRITICAL]' in line:
+                    tag = 'error'
+                elif '[+]' in line:
+                    tag = 'success'
+                elif '[*]' in line:
+                    tag = 'info'
+                elif 'ERROR' in line: # 捕获其他可能的错误
                     tag = 'error'
                 
                 self.append_terminal(line, tag)
@@ -754,24 +864,18 @@ class SQLMapGUI:
             self.is_scanning = False
             self.is_paused = False
             self.scan_btn.config(text="▶ 开始扫描", state='normal')
-            self.pause_btn.config(text="⏸ 暂停", state='disabled')
             self.stop_btn.config(state='disabled')
-    
+            
+            if not self.external_term_var.get() and ('--os-shell' in cmd or '--sql-shell' in cmd or '--wizard' in cmd):
+                messagebox.showinfo("提示", "您正在使用交互式功能（如 --os-shell）。\n由于Windows管道限制，内部终端无法支持交互。\n请务必勾选左侧的【在外部终端运行】选项！")
+
+
     def append_terminal(self, text, tag=None):
         self.terminal.insert('end', text, tag)
         self.terminal.see('end')
     
-    def toggle_pause(self):
-        if not self.is_scanning:
-            return
-        self.is_paused = not self.is_paused
-        if self.is_paused:
-            self.pause_btn.config(text="▶ 继续")
-            self.status_var.set("已暂停")
-        else:
-            self.pause_btn.config(text="⏸ 暂停")
-            self.status_var.set("继续扫描...")
-    
+
+
     def stop_scan(self):
         if self.scan_process:
             try:
@@ -786,7 +890,6 @@ class SQLMapGUI:
         self.append_terminal("\n[!] 扫描已停止\n", 'warning')
         self.status_var.set("扫描已停止")
         self.scan_btn.config(text="▶ 开始扫描", state='normal')
-        self.pause_btn.config(text="⏸ 暂停", state='disabled')
         self.stop_btn.config(state='disabled')
     
     def clear_output(self):
@@ -851,7 +954,11 @@ class SQLMapGUI:
     
     def show_command(self):
         cmd = self.build_command()
-        cmd_str = ' '.join(cmd)
+        
+        if IS_WINDOWS:
+            cmd_str = subprocess.list2cmdline(cmd)
+        else:
+            cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
         
         dialog = tk.Toplevel(self.root)
         dialog.title("命令预览")
@@ -989,12 +1096,13 @@ class SQLMapGUI:
             pass
     
     def show_help(self):
-        help_text = """SQLMap GUI v1.0 使用帮助
+        help_text = """SQLMap GUI v1.1 使用帮助
 
 【快速开始】
 1. 在"目标"标签页输入目标URL
 2. 点击"更新命令"预览生成的命令
-3. 点击"开始扫描"执行测试
+3. (可选) 勾选"在外部终端运行"以支持交互功能
+4. 点击"开始扫描"执行测试
 
 【主要功能】
 - 目标设置: URL、批量文件、请求文件、Google Dork
@@ -1003,9 +1111,12 @@ class SQLMapGUI:
 - 枚举设置: 数据库、表、列、数据导出
 - 高级设置: 线程、Tamper脚本、OS Shell
 
+【运行模式】
+- 内部终端: 适用于非交互式扫描，日志直接显示在下方
+- 外部终端: 适用于需要交互的功能(如--os-shell, --wizard)，将打开新窗口
+
 【控制按钮】
 - 开始扫描: 开始执行sqlmap
-- 暂停: 暂停/继续扫描
 - 停止: 立即停止扫描
 
 【注意事项】
