@@ -1,4 +1,4 @@
-# SQLMap GUI V1.0 - 图形化SQL注入扫描工具
+# SQLMap GUI V1.1 - 图形化SQL注入扫描工具
 
 <div align="center">
 
